@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ping Pong Game</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Ping Pong <span class="badge">HD</span></h1>
+        
+        <div class="score-container">
+            <div class="player-side">
+                <div class="score-label">You</div>
+                <div id="player-score">0</div>
+            </div>
+            <div class="computer-side">
+                <div class="score-label">Opponent</div>
+                <div id="computer-score">0</div>
+            </div>
+        </div>
+        
+        <canvas id="game" width="600" height="400"></canvas>
+        
+        <div class="controls">
+            <button id="start-btn"><i class="fas fa-play"></i> Start Game</button>
+            <button id="restart-btn"><i class="fas fa-redo"></i> Restart</button>
+        </div>
+        
+        <div class="instructions">
+            <p><i class="fas fa-mouse-pointer"></i> Use your mouse to move the paddle</p>
+            <p><i class="fas fa-keyboard"></i> Or use arrow keys / W-S keys</p>
+            <p><i class="fas fa-trophy"></i> First to 5 points wins!</p>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html> 
