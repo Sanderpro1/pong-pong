@@ -386,4 +386,77 @@ button:active {
     .input-group .buttons {
         flex-direction: column;
     }
+}
+
+/* Connection status */
+#connection-status {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    padding: 8px 15px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    z-index: 100;
+    transition: all 0.3s ease;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+}
+
+#connection-status.connecting {
+    background-color: #ff9800;
+    color: #fff;
+}
+
+#connection-status.connected {
+    background-color: var(--success);
+    color: #fff;
+    opacity: 1;
+    transition: opacity 0.5s ease 1.5s;
+}
+
+#connection-status.error {
+    background-color: var(--error);
+    color: #fff;
+    animation: pulse-error 2s infinite;
+}
+
+@keyframes pulse-error {
+    0% { opacity: 0.8; }
+    50% { opacity: 1; }
+    100% { opacity: 0.8; }
+}
+
+/* Copy button for room code */
+.copy-btn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    cursor: pointer;
+    margin-left: 5px;
+    padding: 2px 5px;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+    box-shadow: none;
+}
+
+.copy-btn:hover {
+    color: #fff;
+    transform: scale(1.1);
+    box-shadow: none;
+}
+
+/* Add to existing room status styles */
+#room-status.success {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* Mobile responsive fixes */
+@media (max-width: 500px) {
+    #connection-status {
+        font-size: 0.8rem;
+        padding: 5px 10px;
+    }
 } 

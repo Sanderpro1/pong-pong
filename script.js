@@ -151,88 +151,144 @@ joinRoomBtn.addEventListener('click', joinRoom);
 function initializeSocketConnection() {
     if (socket) return; // Already connected
     
+    // Add connection status UI
+    const statusElem = document.createElement('div');
+    statusElem.id = 'connection-status';
+    statusElem.className = 'connecting';
+    statusElem.textContent = 'Connecting...';
+    document.querySelector('.container').appendChild(statusElem);
+    
     // Connect to server - works with both local and remote servers
-    const serverURL = window.location.hostname === 'localhost' 
-        ? '/' 
-        : window.location.origin;
-    
-    socket = io(serverURL);
-    
-    // Handle socket events
-    socket.on('connect', () => {
-        console.log('Connected to server with ID:', socket.id);
-    });
-    
-    socket.on('roomCreated', (id) => {
-        roomId = id;
-        isHost = true;
-        playerRole = 'left';
-        updateRoomStatus(`Room created! Share code: ${roomId}`, 'success');
-    });
-    
-    socket.on('roomJoined', (id) => {
-        roomId = id;
-        isHost = false;
-        updateRoomStatus(`Joined room: ${roomId}`, 'success');
-    });
-    
-    socket.on('roomError', (message) => {
-        updateRoomStatus(message, 'error');
-    });
-    
-    socket.on('playerJoined', (players) => {
-        if (players.length === 2) {
-            updateRoomStatus('Game ready! Both players connected.', 'success');
-        }
-    });
-    
-    socket.on('gameReady', (roles) => {
-        isMultiplayer = true;
-        playerRole = roles[socket.id];
+    try {
+        const serverURL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? window.location.origin
+            : window.location.hostname.includes('glitch.me') 
+                ? window.location.origin
+                : 'https://your-render-app-name.onrender.com'; // Replace with your actual deployed URL
         
-        // Set player position based on role
-        if (playerRole === 'right') {
-            player.x = width - paddleWidth - 10;
-            player.color = colors.secondary;
-            opponent.x = 10;
-            opponent.color = colors.primary;
-        }
+        console.log('Connecting to server:', serverURL);
         
-        if (isHost) {
-            startMultiplayerGame();
-        } else {
-            // Wait for host to start
-            gameStarted = true;
-            updateRoomStatus('Game started!', 'success');
-            multiplayerUI.style.display = 'none';
+        // Connect with retry logic and timeout
+        socket = io(serverURL, {
+            reconnectionAttempts: 5,
+            timeout: 10000,
+            transports: ['websocket', 'polling']
+        });
+        
+        // Handle connection events
+        socket.on('connect', () => {
+            console.log('Connected to server with ID:', socket.id);
+            statusElem.className = 'connected';
+            statusElem.textContent = 'Connected';
+            setTimeout(() => {
+                statusElem.style.opacity = '0';
+            }, 2000);
+        });
+        
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            statusElem.className = 'error';
+            statusElem.textContent = 'Connection failed. Check console for details.';
+            
+            // Show more detailed error in room status
+            updateRoomStatus('Connection to server failed. Try refreshing the page.', 'error');
+        });
+        
+        socket.on('disconnect', (reason) => {
+            console.log('Disconnected:', reason);
+            statusElem.className = 'error';
+            statusElem.textContent = 'Disconnected: ' + reason;
+            statusElem.style.opacity = '1';
+            
+            // If still in a game, show alert
+            if (isMultiplayer) {
+                updateRoomStatus('Lost connection to server. Try refreshing.', 'error');
+            }
+        });
+        
+        socket.on('connectionEstablished', (data) => {
+            console.log('Server confirmed connection:', data);
+        });
+        
+        // Rest of socket event handlers remain the same
+        socket.on('roomCreated', (id) => {
+            roomId = id;
+            isHost = true;
+            playerRole = 'left';
+            updateRoomStatus(`Room created! Share code: ${roomId}`, 'success');
+        });
+        
+        socket.on('roomJoined', (id) => {
+            roomId = id;
+            isHost = false;
+            updateRoomStatus(`Joined room: ${roomId}`, 'success');
+        });
+        
+        socket.on('roomError', (message) => {
+            updateRoomStatus(message, 'error');
+        });
+        
+        socket.on('playerJoined', (players) => {
+            if (players.length === 2) {
+                updateRoomStatus('Game ready! Both players connected.', 'success');
+            }
+        });
+        
+        socket.on('gameReady', (roles) => {
+            isMultiplayer = true;
+            playerRole = roles[socket.id];
+            
+            // Set player position based on role
+            if (playerRole === 'right') {
+                player.x = width - paddleWidth - 10;
+                player.color = colors.secondary;
+                opponent.x = 10;
+                opponent.color = colors.primary;
+            }
+            
+            if (isHost) {
+                startMultiplayerGame();
+            } else {
+                // Wait for host to start
+                gameStarted = true;
+                updateRoomStatus('Game started!', 'success');
+                multiplayerUI.style.display = 'none';
+            }
+        });
+        
+        socket.on('opponentMove', (position) => {
+            opponent.y = position;
+        });
+        
+        socket.on('ballSync', (ballData) => {
+            if (!isHost) {
+                ball.x = ballData.x;
+                ball.y = ballData.y;
+                ball.velocityX = ballData.velocityX;
+                ball.velocityY = ballData.velocityY;
+            }
+        });
+        
+        socket.on('scoreSync', (data) => {
+            playerScore = data.playerScore;
+            opponentScore = data.opponentScore;
+            updateScore();
+        });
+        
+        socket.on('playerLeft', () => {
+            if (isMultiplayer) {
+                updateRoomStatus('Opponent disconnected', 'error');
+                resetToSinglePlayer();
+            }
+        });
+    } catch (error) {
+        console.error('Socket initialization error:', error);
+        const statusElem = document.getElementById('connection-status');
+        if (statusElem) {
+            statusElem.className = 'error';
+            statusElem.textContent = 'Failed to connect to server';
         }
-    });
-    
-    socket.on('opponentMove', (position) => {
-        opponent.y = position;
-    });
-    
-    socket.on('ballSync', (ballData) => {
-        if (!isHost) {
-            ball.x = ballData.x;
-            ball.y = ballData.y;
-            ball.velocityX = ballData.velocityX;
-            ball.velocityY = ballData.velocityY;
-        }
-    });
-    
-    socket.on('scoreSync', (data) => {
-        playerScore = data.playerScore;
-        opponentScore = data.opponentScore;
-        updateScore();
-    });
-    
-    socket.on('playerLeft', () => {
-        if (isMultiplayer) {
-            updateRoomStatus('Opponent disconnected', 'error');
-            resetToSinglePlayer();
-        }
-    });
+    }
 }
 
 // Multiplayer UI functions
@@ -249,15 +305,57 @@ function showSinglePlayerUI() {
 function updateRoomStatus(message, type) {
     roomStatus.textContent = message;
     roomStatus.className = `status ${type}`;
+    
+    // If it's a success message with a room code, add copy button
+    if (type === 'success' && message.includes('Room created')) {
+        const code = roomId;
+        roomStatus.textContent = 'Room created! Share code: ';
+        
+        const codeSpan = document.createElement('span');
+        codeSpan.className = 'room-code';
+        codeSpan.textContent = code;
+        roomStatus.appendChild(codeSpan);
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(code)
+                .then(() => {
+                    copyBtn.innerHTML = '<i class="fas fa-check"></i>';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Could not copy text: ', err);
+                    copyBtn.innerHTML = '<i class="fas fa-times"></i>';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                    }, 2000);
+                });
+        });
+        roomStatus.appendChild(copyBtn);
+    }
 }
 
 function createRoom() {
+    if (!socket || !socket.connected) {
+        updateRoomStatus('Not connected to server. Please wait or refresh.', 'error');
+        return;
+    }
+    
     const id = roomIdInput.value.trim() || generateRoomId();
     roomIdInput.value = id;
     socket.emit('createRoom', id);
 }
 
 function joinRoom() {
+    if (!socket || !socket.connected) {
+        updateRoomStatus('Not connected to server. Please wait or refresh.', 'error');
+        return;
+    }
+    
     const id = roomIdInput.value.trim();
     if (!id) {
         updateRoomStatus('Please enter a room code', 'error');
