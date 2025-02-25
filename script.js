@@ -4,6 +4,21 @@ const ctx = canvas.getContext('2d');
 const width = canvas.width;
 const height = canvas.height;
 
+// Sound effects
+const sounds = {
+    paddle: new Audio('https://assets.codepen.io/21542/pop.wav'),
+    score: new Audio('https://assets.codepen.io/21542/score.wav'),
+    wall: new Audio('https://assets.codepen.io/21542/wall.wav'),
+    gameStart: new Audio('https://assets.codepen.io/21542/start-game.wav'),
+    powerup: new Audio('https://assets.codepen.io/21542/powerup.wav')
+};
+
+// Mute all sounds initially (will be enabled by user interaction)
+Object.values(sounds).forEach(sound => {
+    sound.volume = 0.3;
+    sound.muted = true;
+});
+
 // Game elements
 const paddleWidth = 15;
 const paddleHeight = 80;
@@ -21,7 +36,14 @@ let isHost = false;
 let roomId = null;
 let playerRole = null; // 'left' or 'right'
 let lastScoreTime = 0; // To prevent rapid scoring
-const scoreDelay = 1000; // 1 second delay between scores
+let soundEnabled = false;
+let countdown = null;
+let powerups = [];
+let settings = {
+    ballSpeed: 5,
+    paddleSize: 80,
+    soundEnabled: false
+};
 
 // Socket.io connection
 let socket = null;
@@ -42,7 +64,17 @@ let scoreFlash = { active: false, alpha: 0, side: null };
 const colors = {
     primary: '#00bcd4',
     secondary: '#ff4081',
-    background: '#0a0a0a'
+    background: '#0a0a0a',
+    powerupSpeed: '#ffc107',
+    powerupSize: '#4caf50',
+    powerupSlow: '#9c27b0'
+};
+
+// Power-up types
+const POWERUP_TYPES = {
+    SPEED_UP: 'speedUp',
+    ENLARGE_PADDLE: 'enlargePaddle',
+    SLOW_OPPONENT: 'slowOpponent'
 };
 
 // Player paddle
@@ -54,7 +86,10 @@ const player = {
     color: colors.primary,
     score: 0,
     speed: 8,
-    dy: 0
+    dy: 0,
+    originalHeight: paddleHeight,
+    originalSpeed: 8,
+    powerups: []
 };
 
 // Opponent paddle (was computer)
@@ -65,7 +100,10 @@ const opponent = {
     height: paddleHeight,
     color: colors.secondary,
     score: 0,
-    speed: 4.5
+    speed: 4.5,
+    originalHeight: paddleHeight,
+    originalSpeed: 4.5,
+    powerups: []
 };
 
 // Ball
@@ -103,10 +141,44 @@ multiplayerUI.innerHTML = `
             </div>
         </div>
         <div id="room-status"></div>
+        <div id="game-options">
+            <h4>Game Settings</h4>
+            <div class="setting">
+                <label for="ball-speed">Ball Speed:</label>
+                <input type="range" id="ball-speed" min="3" max="8" value="5" step="1">
+                <span id="ball-speed-value">5</span>
+            </div>
+            <div class="setting">
+                <label for="sound-toggle">Sound:</label>
+                <button id="sound-toggle">
+                    <i class="fas fa-volume-mute"></i> Enable Sound
+                </button>
+            </div>
+            <div class="setting">
+                <label for="powerups-toggle">Power-ups:</label>
+                <input type="checkbox" id="powerups-toggle" checked>
+                <label for="powerups-toggle" class="toggle-label"></label>
+            </div>
+        </div>
         <button id="single-player-btn">Back to Single Player</button>
     </div>
 `;
 document.querySelector('.container').appendChild(multiplayerUI);
+
+// Create a game menu for game over state
+const gameOverUI = document.createElement('div');
+gameOverUI.className = 'game-over-ui';
+gameOverUI.innerHTML = `
+    <div class="game-over-menu">
+        <h3 id="game-result">You Win!</h3>
+        <div class="buttons">
+            <button id="rematch-btn"><i class="fas fa-redo"></i> Rematch</button>
+            <button id="menu-btn"><i class="fas fa-home"></i> Main Menu</button>
+        </div>
+    </div>
+`;
+document.querySelector('.container').appendChild(gameOverUI);
+gameOverUI.style.display = 'none';
 
 // Get multiplayer UI elements
 const roomIdInput = document.getElementById('room-id');
@@ -115,12 +187,59 @@ const joinRoomBtn = document.getElementById('join-btn');
 const roomStatus = document.getElementById('room-status');
 const singlePlayerBtn = document.getElementById('single-player-btn');
 const playerInfo = document.getElementById('player-info');
+const soundToggleBtn = document.getElementById('sound-toggle');
+const powerupsToggle = document.getElementById('powerups-toggle');
+const ballSpeedSlider = document.getElementById('ball-speed');
+const ballSpeedValue = document.getElementById('ball-speed-value');
+const rematchBtn = document.getElementById('rematch-btn');
+const menuBtn = document.getElementById('menu-btn');
 
 // Add multiplayer button to main controls
 const multiplayerBtn = document.createElement('button');
 multiplayerBtn.id = 'multiplayer-btn';
 multiplayerBtn.innerHTML = '<i class="fas fa-users"></i> Play Online';
 document.querySelector('.controls').appendChild(multiplayerBtn);
+
+// Add settings button to main controls
+const settingsBtn = document.createElement('button');
+settingsBtn.id = 'settings-btn';
+settingsBtn.innerHTML = '<i class="fas fa-cog"></i> Settings';
+document.querySelector('.controls').appendChild(settingsBtn);
+
+// Create settings menu
+const settingsUI = document.createElement('div');
+settingsUI.className = 'settings-ui';
+settingsUI.innerHTML = `
+    <div class="settings-menu">
+        <h3>Game Settings</h3>
+        <div class="setting">
+            <label for="sp-ball-speed">Ball Speed:</label>
+            <input type="range" id="sp-ball-speed" min="3" max="8" value="5" step="1">
+            <span id="sp-ball-speed-value">5</span>
+        </div>
+        <div class="setting">
+            <label for="sp-sound-toggle">Sound:</label>
+            <button id="sp-sound-toggle">
+                <i class="fas fa-volume-mute"></i> Enable Sound
+            </button>
+        </div>
+        <div class="setting">
+            <label for="sp-powerups-toggle">Power-ups:</label>
+            <input type="checkbox" id="sp-powerups-toggle" checked>
+            <label for="sp-powerups-toggle" class="toggle-label"></label>
+        </div>
+        <button id="settings-close">Close</button>
+    </div>
+`;
+document.querySelector('.container').appendChild(settingsUI);
+settingsUI.style.display = 'none';
+
+// Get settings UI elements
+const spBallSpeedSlider = document.getElementById('sp-ball-speed');
+const spBallSpeedValue = document.getElementById('sp-ball-speed-value');
+const spSoundToggleBtn = document.getElementById('sp-sound-toggle');
+const spPowerupsToggle = document.getElementById('sp-powerups-toggle');
+const settingsCloseBtn = document.getElementById('settings-close');
 
 // Hide multiplayer UI initially
 multiplayerUI.style.display = 'none';
@@ -146,12 +265,106 @@ canvas.addEventListener('mousemove', (e) => {
     useMouseControl = true;
 });
 
+// Enable sound when the user interacts with the game
+document.addEventListener('click', enableSound);
+
+function enableSound() {
+    if (!soundEnabled) {
+        soundEnabled = true;
+        Object.values(sounds).forEach(sound => {
+            sound.muted = !settings.soundEnabled;
+        });
+        document.removeEventListener('click', enableSound);
+    }
+}
+
+// Button event listeners
 startBtn.addEventListener('click', startGame);
 restartBtn.addEventListener('click', restartGame);
 multiplayerBtn.addEventListener('click', showMultiplayerUI);
 singlePlayerBtn.addEventListener('click', showSinglePlayerUI);
 createRoomBtn.addEventListener('click', createRoom);
 joinRoomBtn.addEventListener('click', joinRoom);
+settingsBtn.addEventListener('click', showSettings);
+settingsCloseBtn.addEventListener('click', hideSettings);
+
+// Settings event listeners
+soundToggleBtn.addEventListener('click', () => toggleSound(soundToggleBtn));
+spSoundToggleBtn.addEventListener('click', () => toggleSound(spSoundToggleBtn));
+
+ballSpeedSlider.addEventListener('input', () => {
+    ballSpeedValue.textContent = ballSpeedSlider.value;
+    settings.ballSpeed = parseInt(ballSpeedSlider.value);
+});
+
+spBallSpeedSlider.addEventListener('input', () => {
+    spBallSpeedValue.textContent = spBallSpeedSlider.value;
+    settings.ballSpeed = parseInt(spBallSpeedSlider.value);
+});
+
+powerupsToggle.addEventListener('change', () => {
+    settings.powerupsEnabled = powerupsToggle.checked;
+});
+
+spPowerupsToggle.addEventListener('change', () => {
+    settings.powerupsEnabled = spPowerupsToggle.checked;
+});
+
+// Game over UI event listeners
+rematchBtn.addEventListener('click', requestRematch);
+menuBtn.addEventListener('click', () => {
+    gameOverUI.style.display = 'none';
+    resetToSinglePlayer();
+});
+
+function toggleSound(button) {
+    settings.soundEnabled = !settings.soundEnabled;
+    Object.values(sounds).forEach(sound => {
+        sound.muted = !settings.soundEnabled;
+    });
+    
+    if (settings.soundEnabled) {
+        button.innerHTML = '<i class="fas fa-volume-up"></i> Disable Sound';
+    } else {
+        button.innerHTML = '<i class="fas fa-volume-mute"></i> Enable Sound';
+    }
+    
+    // Update the other sound button to match
+    if (button === soundToggleBtn && spSoundToggleBtn) {
+        if (settings.soundEnabled) {
+            spSoundToggleBtn.innerHTML = '<i class="fas fa-volume-up"></i> Disable Sound';
+        } else {
+            spSoundToggleBtn.innerHTML = '<i class="fas fa-volume-mute"></i> Enable Sound';
+        }
+    } else if (button === spSoundToggleBtn && soundToggleBtn) {
+        if (settings.soundEnabled) {
+            soundToggleBtn.innerHTML = '<i class="fas fa-volume-up"></i> Disable Sound';
+        } else {
+            soundToggleBtn.innerHTML = '<i class="fas fa-volume-mute"></i> Enable Sound';
+        }
+    }
+}
+
+function showSettings() {
+    settingsUI.style.display = 'flex';
+}
+
+function hideSettings() {
+    settingsUI.style.display = 'none';
+}
+
+function requestRematch() {
+    if (isMultiplayer) {
+        // Reset game but keep multiplayer state
+        resetGame();
+        if (isHost) {
+            socket.emit('rematchRequest', roomId);
+        }
+    } else {
+        resetGame();
+        gameOverUI.style.display = 'none';
+    }
+}
 
 // Socket.IO connection
 function initializeSocketConnection() {
@@ -306,6 +519,31 @@ function initializeSocketConnection() {
                 resetToSinglePlayer();
             }
         });
+        
+        // Add new event handlers for powerups and rematch
+        socket.on('powerupSpawned', (powerupData) => {
+            if (!isHost) {
+                spawnPowerup(powerupData.x, powerupData.y, powerupData.type, powerupData.id);
+            }
+        });
+        
+        socket.on('powerupCollected', (data) => {
+            collectPowerup(data.id, data.playerRole);
+        });
+        
+        socket.on('rematchAccepted', () => {
+            resetGame();
+            startMultiplayerGame();
+        });
+        
+        socket.on('rematchRequest', () => {
+            // Show rematch request dialog
+            if (confirm('Opponent wants a rematch. Accept?')) {
+                socket.emit('rematchAccepted', roomId);
+                resetGame();
+                startMultiplayerGame();
+            }
+        });
     } catch (error) {
         console.error('Socket initialization error:', error);
         const statusElem = document.getElementById('connection-status');
@@ -427,7 +665,7 @@ function generateRoomId() {
 
 function startMultiplayerGame() {
     // Set up game state
-    gameStarted = true;
+    gameStarted = false;
     gameOver = false;
     playerScore = 0;
     opponentScore = 0;
@@ -442,14 +680,15 @@ function startMultiplayerGame() {
     particles.length = 0;
     trails.length = 0;
     
-    // Set up time for animation loop
-    lastTime = performance.now();
+    // Clear powerups
+    powerups = [];
     
     // Hide multiplayer UI
     multiplayerUI.style.display = 'none';
+    gameOverUI.style.display = 'none';
     
-    // Start the game loop
-    gameLoop(lastTime);
+    // Start countdown
+    startCountdown();
 }
 
 function resetToSinglePlayer() {
@@ -475,21 +714,52 @@ function resetToSinglePlayer() {
     // Reset score labels
     updateScoreLabels();
     
+    // Reset powerups
+    powerups = [];
+    resetPaddlePowerups();
+    
     // Reset UI
     multiplayerUI.style.display = 'none';
+    gameOverUI.style.display = 'none';
     if (playerInfo) playerInfo.style.display = 'none';
+}
+
+// Start a countdown before game begins
+function startCountdown() {
+    countdown = 3;
+    
+    // Play start sound
+    if (settings.soundEnabled) {
+        sounds.gameStart.currentTime = 0;
+        sounds.gameStart.play();
+    }
+    
+    const countdownInterval = setInterval(() => {
+        countdown--;
+        
+        if (countdown <= 0) {
+            clearInterval(countdownInterval);
+            gameStarted = true;
+            lastTime = performance.now();
+            gameLoop(lastTime);
+            countdown = null;
+        }
+    }, 1000);
 }
 
 // Game functions
 function startGame() {
     if (!gameStarted) {
-        gameStarted = true;
-        lastTime = performance.now();
-        gameLoop(lastTime);
+        startCountdown();
     }
 }
 
 function restartGame() {
+    resetGame();
+    startCountdown();
+}
+
+function resetGame() {
     // Reset game state
     gameStarted = false;
     gameOver = false;
@@ -502,18 +772,35 @@ function restartGame() {
     opponent.y = height / 2 - opponent.height / 2;
     resetBall();
     
+    // Reset powerups
+    powerups = [];
+    resetPaddlePowerups();
+    
     // Clear effects
     particles.length = 0;
     trails.length = 0;
+    
+    // Hide game over UI
+    gameOverUI.style.display = 'none';
     
     // Redraw everything
     draw();
 }
 
+function resetPaddlePowerups() {
+    // Reset paddle sizes and speeds
+    player.height = player.originalHeight;
+    player.speed = player.originalSpeed;
+    opponent.height = opponent.originalHeight;
+    opponent.speed = opponent.originalSpeed;
+    player.powerups = [];
+    opponent.powerups = [];
+}
+
 function resetBall() {
     ball.x = width / 2;
     ball.y = height / 2;
-    ball.speed = ballSpeed;
+    ball.speed = settings.ballSpeed;
     
     // Randomize initial direction
     ball.velocityX = Math.random() > 0.5 ? -ball.speed : ball.speed;
@@ -528,6 +815,12 @@ function resetBall() {
 
 function updateScore() {
     console.log('Updating score:', playerScore, opponentScore);
+    
+    // Play score sound
+    if (settings.soundEnabled) {
+        sounds.score.currentTime = 0;
+        sounds.score.play();
+    }
     
     // Update the display
     updateScoreDisplay();
@@ -548,12 +841,12 @@ function updateScoreDisplay() {
     computerScoreElem.textContent = opponentScore;
 }
 
-function collision(ball, paddle) {
+function collision(obj1, obj2) {
     return (
-        ball.x < paddle.x + paddle.width &&
-        ball.x + ball.size > paddle.x &&
-        ball.y < paddle.y + paddle.height &&
-        ball.y + ball.size > paddle.y
+        obj1.x < obj2.x + obj2.width &&
+        obj1.x + obj1.size > obj2.x &&
+        obj1.y < obj2.y + obj2.height &&
+        obj1.y + obj1.size > obj2.y
     );
 }
 
@@ -642,6 +935,13 @@ function moveBall(deltaTime) {
     // Wall collision (top and bottom)
     if (ball.y <= 0 || ball.y + ball.size >= height) {
         ball.velocityY = -ball.velocityY;
+        
+        // Play wall sound
+        if (settings.soundEnabled) {
+            sounds.wall.currentTime = 0;
+            sounds.wall.play();
+        }
+        
         // Add particles effect
         createParticles(ball.x, ball.y <= 0 ? 0 : height, 10, '#ffffff');
     }
@@ -662,6 +962,12 @@ function moveBall(deltaTime) {
         // Reverse ball direction
         ball.velocityX = -ball.velocityX * 1.05; // Increase speed slightly
         
+        // Play paddle sound
+        if (settings.soundEnabled) {
+            sounds.paddle.currentTime = 0;
+            sounds.paddle.play();
+        }
+        
         // Change Y direction based on where the ball hit the paddle
         const hitLocation = (ball.y + ball.size/2) - (paddleToCheck.y + paddleToCheck.height/2);
         ball.velocityY = hitLocation * 0.2;
@@ -673,6 +979,29 @@ function moveBall(deltaTime) {
             15, 
             paddleToCheck.color
         );
+    }
+    
+    // Check for powerup collisions
+    for (let i = powerups.length - 1; i >= 0; i--) {
+        const powerup = powerups[i];
+        
+        // Check if ball collided with powerup
+        if (distance(ball.x + ball.size/2, ball.y + ball.size/2, 
+                    powerup.x, powerup.y) < (ball.size/2 + powerup.radius)) {
+            
+            // Determine which player gets the powerup
+            const powerupTarget = ball.velocityX < 0 ? 'right' : 'left';
+            collectPowerup(powerup.id, powerupTarget);
+            
+            // Sync powerup collection in multiplayer
+            if (isMultiplayer) {
+                socket.emit('powerupCollected', {
+                    roomId,
+                    id: powerup.id,
+                    playerRole: powerupTarget
+                });
+            }
+        }
     }
     
     // Check for scoring only after the delay has passed
@@ -707,6 +1036,7 @@ function moveBall(deltaTime) {
         
         checkGameOver();
         resetBall();
+        resetPaddlePowerups();
     } else if (ball.x > width) {
         // Left scores
         lastScoreTime = currentTime;
@@ -727,6 +1057,7 @@ function moveBall(deltaTime) {
         
         checkGameOver();
         resetBall();
+        resetPaddlePowerups();
     }
     
     // In multiplayer, send ball data to the opponent
@@ -743,6 +1074,154 @@ function moveBall(deltaTime) {
     }
 }
 
+// Powerup system
+function spawnPowerup(x, y, type, id) {
+    // If powerups are disabled in settings, don't spawn
+    if (!settings.powerupsEnabled) return;
+    
+    const powerup = {
+        id: id || Math.random().toString(36).substring(2, 10),
+        x: x || Math.random() * (width - 100) + 50,
+        y: y || Math.random() * (height - 100) + 50,
+        type: type || getRandomPowerupType(),
+        radius: 15,
+        alpha: 1,
+        rotation: 0
+    };
+    
+    powerups.push(powerup);
+    
+    // In multiplayer, sync powerup spawn
+    if (isMultiplayer && isHost && !x) {
+        socket.emit('powerupSpawned', {
+            roomId,
+            id: powerup.id,
+            x: powerup.x,
+            y: powerup.y,
+            type: powerup.type
+        });
+    }
+    
+    return powerup;
+}
+
+function getRandomPowerupType() {
+    const types = Object.values(POWERUP_TYPES);
+    return types[Math.floor(Math.random() * types.length)];
+}
+
+function collectPowerup(id, playerRole) {
+    const index = powerups.findIndex(p => p.id === id);
+    if (index === -1) return;
+    
+    const powerup = powerups[index];
+    powerups.splice(index, 1);
+    
+    // Play powerup sound
+    if (settings.soundEnabled) {
+        sounds.powerup.currentTime = 0;
+        sounds.powerup.play();
+    }
+    
+    // Create collection effect
+    createParticles(powerup.x, powerup.y, 20, getPowerupColor(powerup.type));
+    
+    // Apply powerup effect
+    applyPowerup(powerup.type, playerRole);
+}
+
+function getPowerupColor(type) {
+    switch(type) {
+        case POWERUP_TYPES.SPEED_UP:
+            return colors.powerupSpeed;
+        case POWERUP_TYPES.ENLARGE_PADDLE:
+            return colors.powerupSize;
+        case POWERUP_TYPES.SLOW_OPPONENT:
+            return colors.powerupSlow;
+        default:
+            return '#ffffff';
+    }
+}
+
+function applyPowerup(type, playerRole) {
+    // Determine which paddle gets the powerup
+    const targetPaddle = (playerRole === 'left') ? 
+        (player.x === 10 ? player : opponent) :
+        (player.x === 10 ? opponent : player);
+    
+    const otherPaddle = targetPaddle === player ? opponent : player;
+    
+    // Apply effect based on type
+    switch(type) {
+        case POWERUP_TYPES.SPEED_UP:
+            targetPaddle.speed *= 1.5;
+            targetPaddle.powerups.push({
+                type,
+                duration: 10000,
+                startTime: performance.now()
+            });
+            break;
+        case POWERUP_TYPES.ENLARGE_PADDLE:
+            targetPaddle.height = Math.min(targetPaddle.height * 1.5, height * 0.5);
+            targetPaddle.powerups.push({
+                type,
+                duration: 8000,
+                startTime: performance.now()
+            });
+            break;
+        case POWERUP_TYPES.SLOW_OPPONENT:
+            otherPaddle.speed *= 0.5;
+            otherPaddle.powerups.push({
+                type,
+                duration: 5000,
+                startTime: performance.now()
+            });
+            break;
+    }
+}
+
+function updatePowerups(currentTime) {
+    // Update active powerups
+    [player, opponent].forEach(paddle => {
+        for (let i = paddle.powerups.length - 1; i >= 0; i--) {
+            const powerup = paddle.powerups[i];
+            if (currentTime - powerup.startTime > powerup.duration) {
+                // Powerup expired, remove effect
+                switch(powerup.type) {
+                    case POWERUP_TYPES.SPEED_UP:
+                        paddle.speed = paddle.originalSpeed;
+                        break;
+                    case POWERUP_TYPES.ENLARGE_PADDLE:
+                        paddle.height = paddle.originalHeight;
+                        break;
+                    case POWERUP_TYPES.SLOW_OPPONENT:
+                        paddle.speed = paddle.originalSpeed;
+                        break;
+                }
+                paddle.powerups.splice(i, 1);
+            }
+        }
+    });
+    
+    // Randomly spawn new powerups (only in host mode for multiplayer)
+    if (!isMultiplayer || isHost) {
+        if (powerups.length < 3 && Math.random() < 0.005 && settings.powerupsEnabled) {
+            spawnPowerup();
+        }
+    }
+    
+    // Update powerup animations
+    for (let i = powerups.length - 1; i >= 0; i--) {
+        const powerup = powerups[i];
+        powerup.rotation += 0.02;
+        
+        // Remove powerups that have been on screen for too long
+        if (powerup.alpha <= 0) {
+            powerups.splice(i, 1);
+        }
+    }
+}
+
 function checkGameOver() {
     if (playerScore >= winningScore || opponentScore >= winningScore) {
         gameOver = true;
@@ -751,7 +1230,21 @@ function checkGameOver() {
         // Victory particles burst
         const color = playerScore >= winningScore ? player.color : opponent.color;
         createParticles(width/2, height/2, 100, color);
+        
+        // Show game over UI
+        const gameResult = document.getElementById('game-result');
+        if (playerScore >= winningScore) {
+            gameResult.textContent = 'You Win!';
+        } else {
+            gameResult.textContent = 'Opponent Wins!';
+        }
+        gameOverUI.style.display = 'flex';
     }
+}
+
+// Utility functions
+function distance(x1, y1, x2, y2) {
+    return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
 }
 
 // Particle system for visual effects
@@ -817,6 +1310,12 @@ function draw() {
     ctx.stroke();
     ctx.setLineDash([]);
     
+    // Draw powerups
+    for (let i = 0; i < powerups.length; i++) {
+        const powerup = powerups[i];
+        drawPowerup(powerup);
+    }
+    
     // Draw trails
     for (let i = 0; i < trails.length; i++) {
         const trail = trails[i];
@@ -864,12 +1363,90 @@ function draw() {
     
     // Draw game status
     if (!gameStarted && !gameOver) {
-        drawGameMessage("Press 'Start Game' to play", width / 2, height / 2, '20px');
-    } else if (gameOver) {
+        if (countdown !== null) {
+            // Draw countdown
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.font = '64px Poppins, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = colors.primary;
+            ctx.shadowBlur = 15;
+            ctx.fillText(countdown, width / 2, height / 2);
+            ctx.shadowBlur = 0;
+        } else {
+            drawGameMessage("Press 'Start Game' to play", width / 2, height / 2, '20px');
+        }
+    } else if (gameOver && gameOverUI.style.display !== 'flex') {
         const message = playerScore >= winningScore ? "You Win!" : "Opponent Wins!";
         drawGameMessage(message, width / 2, height / 2, '30px');
         drawGameMessage("Press 'Restart' to play again", width / 2, height / 2 + 40, '20px');
     }
+}
+
+function drawPowerup(powerup) {
+    const color = getPowerupColor(powerup.type);
+    
+    // Draw glow
+    const gradient = ctx.createRadialGradient(
+        powerup.x, powerup.y, 0,
+        powerup.x, powerup.y, powerup.radius * 2
+    );
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    
+    ctx.beginPath();
+    ctx.fillStyle = gradient;
+    ctx.globalAlpha = 0.3;
+    ctx.arc(powerup.x, powerup.y, powerup.radius * 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    
+    // Draw powerup icon
+    ctx.save();
+    ctx.translate(powerup.x, powerup.y);
+    ctx.rotate(powerup.rotation);
+    
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    
+    // Draw different shapes based on powerup type
+    switch(powerup.type) {
+        case POWERUP_TYPES.SPEED_UP:
+            // Draw lightning bolt
+            ctx.beginPath();
+            ctx.moveTo(-5, -8);
+            ctx.lineTo(2, -2);
+            ctx.lineTo(-2, 2);
+            ctx.lineTo(5, 8);
+            ctx.lineTo(0, 0);
+            ctx.lineTo(5, -4);
+            ctx.closePath();
+            ctx.fill();
+            break;
+        case POWERUP_TYPES.ENLARGE_PADDLE:
+            // Draw rectangle (paddle)
+            ctx.fillRect(-7, -3, 14, 6);
+            break;
+        case POWERUP_TYPES.SLOW_OPPONENT:
+            // Draw snowflake
+            for (let i = 0; i < 6; i++) {
+                ctx.rotate(Math.PI / 3);
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(0, -8);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(-3, -6);
+                ctx.lineTo(0, -8);
+                ctx.lineTo(3, -6);
+                ctx.stroke();
+            }
+            break;
+    }
+    
+    ctx.shadowBlur = 0;
+    ctx.restore();
 }
 
 function drawPaddleWithGlow(paddle) {
@@ -892,6 +1469,17 @@ function drawPaddleWithGlow(paddle) {
     ctx.shadowColor = paddle.color;
     ctx.shadowBlur = 15;
     ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    
+    // Draw powerup indicators on paddle
+    paddle.powerups.forEach((powerup, index) => {
+        const indicatorSize = 5;
+        const x = paddle.x + (paddle.width / 2) - indicatorSize / 2;
+        const y = paddle.y + 5 + (index * 8);
+        
+        ctx.fillStyle = getPowerupColor(powerup.type);
+        ctx.fillRect(x, y, indicatorSize, indicatorSize);
+    });
+    
     ctx.shadowBlur = 0;
 }
 
@@ -954,6 +1542,7 @@ function gameLoop(currentTime) {
     
     if (!gameOver) {
         moveBall(deltaTime);
+        updatePowerups(currentTime);
     }
     
     updateParticles(deltaTime);
