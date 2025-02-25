@@ -20,6 +20,8 @@ let isMultiplayer = false;
 let isHost = false;
 let roomId = null;
 let playerRole = null; // 'left' or 'right'
+let lastScoreTime = 0; // To prevent rapid scoring
+const scoreDelay = 1000; // 1 second delay between scores
 
 // Socket.io connection
 let socket = null;
@@ -90,6 +92,7 @@ multiplayerUI.className = 'multiplayer-ui';
 multiplayerUI.innerHTML = `
     <div class="multiplayer-menu">
         <h3>Play Online</h3>
+        <div id="player-info"></div>
         <div class="input-group">
             <input type="text" id="room-id" placeholder="Room Code" maxlength="6">
             <div class="buttons">
@@ -109,6 +112,7 @@ const createRoomBtn = document.getElementById('create-btn');
 const joinRoomBtn = document.getElementById('join-btn');
 const roomStatus = document.getElementById('room-status');
 const singlePlayerBtn = document.getElementById('single-player-btn');
+const playerInfo = document.getElementById('player-info');
 
 // Add multiplayer button to main controls
 const multiplayerBtn = document.createElement('button');
@@ -164,7 +168,7 @@ function initializeSocketConnection() {
             ? window.location.origin
             : window.location.hostname.includes('glitch.me') 
                 ? window.location.origin
-                : 'https://your-render-app-name.onrender.com'; // Replace with your actual deployed URL
+                : 'https://ping-pong-multiplayer.onrender.com'; // Replace with your actual deployed URL
         
         console.log('Connecting to server:', serverURL);
         
@@ -215,12 +219,15 @@ function initializeSocketConnection() {
             roomId = id;
             isHost = true;
             playerRole = 'left';
+            updatePlayerInfo();
             updateRoomStatus(`Room created! Share code: ${roomId}`, 'success');
         });
         
         socket.on('roomJoined', (id) => {
             roomId = id;
             isHost = false;
+            playerRole = 'right';
+            updatePlayerInfo();
             updateRoomStatus(`Joined room: ${roomId}`, 'success');
         });
         
@@ -231,12 +238,18 @@ function initializeSocketConnection() {
         socket.on('playerJoined', (players) => {
             if (players.length === 2) {
                 updateRoomStatus('Game ready! Both players connected.', 'success');
+                updatePlayerInfo(players.length);
             }
         });
         
         socket.on('gameReady', (roles) => {
             isMultiplayer = true;
             playerRole = roles[socket.id];
+            console.log('Game ready, I am:', playerRole, 'isHost:', isHost);
+            
+            // Reset scores to be sure
+            playerScore = 0;
+            opponentScore = 0;
             
             // Set player position based on role
             if (playerRole === 'right') {
@@ -244,7 +257,14 @@ function initializeSocketConnection() {
                 player.color = colors.secondary;
                 opponent.x = 10;
                 opponent.color = colors.primary;
+            } else {
+                player.x = 10;
+                player.color = colors.primary;
+                opponent.x = width - paddleWidth - 10;
+                opponent.color = colors.secondary;
             }
+            
+            updatePlayerInfo(2);
             
             if (isHost) {
                 startMultiplayerGame();
@@ -270,9 +290,10 @@ function initializeSocketConnection() {
         });
         
         socket.on('scoreSync', (data) => {
+            console.log('Received score sync:', data);
             playerScore = data.playerScore;
             opponentScore = data.opponentScore;
-            updateScore();
+            updateScoreDisplay();
         });
         
         socket.on('playerLeft', () => {
@@ -302,9 +323,41 @@ function showSinglePlayerUI() {
     resetToSinglePlayer();
 }
 
+function updatePlayerInfo(playerCount) {
+    if (!playerInfo) return;
+    
+    let roleText = '';
+    let statusClass = '';
+    
+    if (playerRole === 'left') {
+        roleText = 'You are: LEFT PADDLE (Controls game)';
+        statusClass = 'host';
+    } else if (playerRole === 'right') {
+        roleText = 'You are: RIGHT PADDLE (Waiting for host)';
+        statusClass = 'client';
+    } else {
+        roleText = 'Waiting for role assignment...';
+        statusClass = 'waiting';
+    }
+    
+    let connectedText = '';
+    if (playerCount === 1) {
+        connectedText = '<div class="waiting">Waiting for opponent to join...</div>';
+    } else if (playerCount === 2) {
+        connectedText = '<div class="success">Both players connected!</div>';
+    }
+    
+    playerInfo.innerHTML = `
+        <div class="player-role ${statusClass}">${roleText}</div>
+        ${connectedText}
+    `;
+    
+    playerInfo.style.display = 'block';
+}
+
 function updateRoomStatus(message, type) {
     roomStatus.textContent = message;
-    roomStatus.className = `status ${type}`;
+    roomStatus.className = type;
     
     // If it's a success message with a room code, add copy button
     if (type === 'success' && message.includes('Room created')) {
@@ -373,7 +426,7 @@ function startMultiplayerGame() {
     gameOver = false;
     playerScore = 0;
     opponentScore = 0;
-    updateScore();
+    updateScoreDisplay();
     resetBall();
     lastTime = performance.now();
     multiplayerUI.style.display = 'none';
@@ -397,11 +450,12 @@ function resetToSinglePlayer() {
     gameOver = false;
     playerScore = 0;
     opponentScore = 0;
-    updateScore();
+    updateScoreDisplay();
     resetBall();
     
     // Reset UI
     multiplayerUI.style.display = 'none';
+    if (playerInfo) playerInfo.style.display = 'none';
 }
 
 // Game functions
@@ -419,7 +473,7 @@ function restartGame() {
     gameOver = false;
     playerScore = 0;
     opponentScore = 0;
-    updateScore();
+    updateScoreDisplay();
     
     // Reset elements positions
     player.y = height / 2 - player.height / 2;
@@ -445,20 +499,31 @@ function resetBall() {
     
     // Clear trailing effect
     trails.length = 0;
+    
+    // Reset last score time to prevent immediate scoring
+    lastScoreTime = performance.now();
 }
 
 function updateScore() {
-    playerScoreElem.textContent = playerScore;
-    computerScoreElem.textContent = opponentScore;
+    console.log('Updating score:', playerScore, opponentScore);
+    
+    // Update the display
+    updateScoreDisplay();
     
     // In multiplayer, update opponent's score too
-    if (isMultiplayer) {
+    if (isMultiplayer && isHost) {
+        console.log('Sending score update to opponent');
         socket.emit('scoreUpdate', {
             roomId,
             playerScore,
             opponentScore
         });
     }
+}
+
+function updateScoreDisplay() {
+    playerScoreElem.textContent = playerScore;
+    computerScoreElem.textContent = opponentScore;
 }
 
 function collision(ball, paddle) {
@@ -559,11 +624,16 @@ function moveBall(deltaTime) {
         createParticles(ball.x, ball.y <= 0 ? 0 : height, 10, '#ffffff');
     }
     
-    // Determine which paddle to check based on ball direction
-    const ballGoingLeft = ball.velocityX < 0;
-    const paddleToCheck = ballGoingLeft ? 
-        (playerRole === 'left' ? player : opponent) : 
-        (playerRole === 'left' ? opponent : player);
+    // For multiplayer - ensure correct paddle check based on ball direction and player role
+    let paddleToCheck;
+    
+    if (ball.velocityX < 0) {
+        // Ball is going left - check the left paddle
+        paddleToCheck = player.x === 10 ? player : opponent;
+    } else {
+        // Ball is going right - check the right paddle
+        paddleToCheck = player.x === 10 ? opponent : player;
+    }
     
     // Paddle collision
     if (collision(ball, paddleToCheck)) {
@@ -583,13 +653,28 @@ function moveBall(deltaTime) {
         );
     }
     
+    // Check for scoring only after the delay has passed
+    const currentTime = performance.now();
+    if (currentTime - lastScoreTime < scoreDelay) {
+        // If we're in the delay period but the ball would score, move it back to prevent scoring
+        if (ball.x < 0 || ball.x > width) {
+            ball.x = ball.x < 0 ? 0 : width - ball.size;
+            ball.velocityX = -ball.velocityX;
+        }
+        return;
+    }
+    
     // Ball goes out of bounds - Score!
     if (ball.x < 0) {
-        // Right player scores
-        if (playerRole === 'right') {
-            playerScore++;
-        } else {
-            opponentScore++;
+        // Right scores
+        lastScoreTime = currentTime;
+        
+        if (isHost) {
+            if (playerRole === 'right') {
+                playerScore++;
+            } else {
+                opponentScore++;
+            }
         }
         
         updateScore();
@@ -601,11 +686,15 @@ function moveBall(deltaTime) {
         checkGameOver();
         resetBall();
     } else if (ball.x > width) {
-        // Left player scores
-        if (playerRole === 'left') {
-            playerScore++;
-        } else {
-            opponentScore++;
+        // Left scores
+        lastScoreTime = currentTime;
+        
+        if (isHost) {
+            if (playerRole === 'left') {
+                playerScore++;
+            } else {
+                opponentScore++;
+            }
         }
         
         updateScore();
@@ -736,6 +825,20 @@ function draw() {
     
     // Draw ball with glow
     drawBallWithGlow();
+    
+    // Draw multiplayer role info if in multiplayer mode
+    if (isMultiplayer && gameStarted) {
+        const leftLabel = playerRole === 'left' ? "YOU" : "OPPONENT";
+        const rightLabel = playerRole === 'right' ? "YOU" : "OPPONENT";
+        
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.font = '12px Poppins, sans-serif';
+        ctx.textAlign = 'center';
+        
+        // Draw on paddles
+        ctx.fillText(leftLabel, 20, height - 10);
+        ctx.fillText(rightLabel, width - 20, height - 10);
+    }
     
     // Draw game status
     if (!gameStarted && !gameOver) {
