@@ -83,6 +83,8 @@ const ball = {
 // DOM elements
 const playerScoreElem = document.getElementById('player-score');
 const computerScoreElem = document.getElementById('computer-score');
+const leftPlayerLabel = document.getElementById('left-player-label');
+const rightPlayerLabel = document.getElementById('right-player-label');
 const startBtn = document.getElementById('start-btn');
 const restartBtn = document.getElementById('restart-btn');
 
@@ -264,15 +266,17 @@ function initializeSocketConnection() {
                 opponent.color = colors.secondary;
             }
             
+            // Update score labels based on roles
+            updateScoreLabels();
+            
             updatePlayerInfo(2);
             
-            if (isHost) {
-                startMultiplayerGame();
-            } else {
-                // Wait for host to start
-                gameStarted = true;
+            // Start the game for both host and joining player
+            startMultiplayerGame();
+            
+            // If not host, we don't control the ball
+            if (!isHost) {
                 updateRoomStatus('Game started!', 'success');
-                multiplayerUI.style.display = 'none';
             }
         });
         
@@ -422,14 +426,29 @@ function generateRoomId() {
 }
 
 function startMultiplayerGame() {
+    // Set up game state
     gameStarted = true;
     gameOver = false;
     playerScore = 0;
     opponentScore = 0;
     updateScoreDisplay();
+    
+    // Reset game elements
+    player.y = height / 2 - player.height / 2;
+    opponent.y = height / 2 - opponent.height / 2;
     resetBall();
+    
+    // Clear visual effects
+    particles.length = 0;
+    trails.length = 0;
+    
+    // Set up time for animation loop
     lastTime = performance.now();
+    
+    // Hide multiplayer UI
     multiplayerUI.style.display = 'none';
+    
+    // Start the game loop
     gameLoop(lastTime);
 }
 
@@ -452,6 +471,9 @@ function resetToSinglePlayer() {
     opponentScore = 0;
     updateScoreDisplay();
     resetBall();
+    
+    // Reset score labels
+    updateScoreLabels();
     
     // Reset UI
     multiplayerUI.style.display = 'none';
@@ -942,4 +964,21 @@ function gameLoop(currentTime) {
 }
 
 // Initial draw
-draw(); 
+draw();
+
+// Add this function to update the score labels based on multiplayer role
+function updateScoreLabels() {
+    if (!isMultiplayer) {
+        leftPlayerLabel.textContent = 'You';
+        rightPlayerLabel.textContent = 'Opponent';
+        return;
+    }
+    
+    if (playerRole === 'left') {
+        leftPlayerLabel.textContent = 'You';
+        rightPlayerLabel.textContent = 'Opponent';
+    } else {
+        leftPlayerLabel.textContent = 'Opponent';
+        rightPlayerLabel.textContent = 'You';
+    }
+} 
